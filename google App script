@@ -1,0 +1,327 @@
+function main() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const sheet = spreadsheet.getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  addToCalendar(data, spreadsheet, sheet); 
+  addToMonthlySheet(data, spreadsheet, sheet);
+}
+
+function addToCalendar(data, spreadsheet, sheet) {
+  // If not provided (called standalone), fetch them
+  if (!data || !spreadsheet || !sheet) {
+    spreadsheet = SpreadsheetApp.getActive();
+    sheet = spreadsheet.getActiveSheet();
+    data = sheet.getDataRange().getValues();
+  }
+  const calendar = CalendarApp.getCalendarById('margherita.simoni30@gmail.com');
+  const now = new Date(); // date and time attuali
+  const archiveSheet = getOrCreateArchive(spreadsheet, 'Archivio', data[0], now );
+
+  for (let i = data.length - 1; i > 0; i--) { // Loop indietro perché elimino righe
+    const row = data[i];
+    const nomeCane = row[6];
+    const nomeCliente = row[2];
+    const lavaggio = row[8];
+    const sesso = row[9];
+    const dataArrivo = new Date(row[10]);
+    const dataPartenza = new Date(row[11]);
+    const telefono = row[5];
+    const email = row[1];
+    const indirizzo = row[4];
+    const razzaTagliaEta = row[7];
+
+    const status = row[15];
+    const storedArrival = row[16] ? new Date(row[16]) : null;
+    const storedDeparture = row[17] ? new Date(row[17]) : null;
+
+    const razza = getRazza(row[7])
+
+    const baseDescription =
+      `Nome e cognome: ${nomeCliente} \nTel: ${telefono}\n\n` +
+      `Lavaggio: ${lavaggio}\n\n` +
+      `Altre informazioni:\nSesso: ${sesso}\nRazza/Taglia/Età: ${razzaTagliaEta}`;
+
+    //creo prima i titoli per eliminarli se necessario
+    const arrivalTitle = `🐶 Check-in: ${nomeCane} - ${razza}`;
+    // pick  🛁 or 🚿
+    const emoticon  = lavaggio === 'Sì' ? '🚿' : '🚗';
+    const departureTitle = `${emoticon} Check-out: ${nomeCane} - ${razza}`;
+
+    // Archivia ed elimina se la data è passata
+    if (dataPartenza < now) {
+      archiveSheet.appendRow(row);
+      sheet.deleteRow(i + 1); 
+      continue;
+    }
+
+    // Salta se già processato e non ha modifiche
+    if (status === 'Event Created' &&
+        storedArrival.getTime() === dataArrivo.getTime() &&
+        storedDeparture.getTime() === dataPartenza.getTime()) {
+      continue;
+    }
+
+    if (status !== 'Event Created') {
+      createIfMissing(calendar, dataArrivo,   arrivalTitle,   baseDescription, CalendarApp.EventColor.BLUE);
+      createIfMissing(calendar, dataPartenza, departureTitle, baseDescription, CalendarApp.EventColor.GREEN);
+    } else{ 
+      if (storedArrival.getTime() !== dataArrivo.getTime() ){
+        moveEvent(calendar, storedArrival, arrivalTitle, dataArrivo,baseDescription, CalendarApp.EventColor.BLUE)
+      }
+      if (storedDeparture.getTime() !== dataPartenza.getTime() ){
+        moveEvent(calendar, storedDeparture, departureTitle, dataPartenza,baseDescription, CalendarApp.EventColor.GREEN)
+    }
+    }
+
+    // Mark as processed
+    sheet.getRange(i + 1, 17).setNumberFormat("dd/MM/yyyy HH:mm");
+    sheet.getRange(i + 1, 17).setValue(dataArrivo);
+    sheet.getRange(i + 1, 18).setNumberFormat("dd/MM/yyyy HH:mm");
+    sheet.getRange(i + 1, 18).setValue(dataPartenza);
+    sheet.getRange(i + 1, 16).setValue('Event Created');
+
+  }
+}
+
+function addToMonthlySheet(data, spreadsheet, sheet){
+  if (!data || !spreadsheet) {
+    spreadsheet = SpreadsheetApp.getActive();
+    sheet = spreadsheet.getActiveSheet();
+    data = sheet.getDataRange().getValues();
+  }
+  const monthlySheets = getOrCreateMonthlySheets(spreadsheet);
+
+  const now = new Date(); // date and time attuali
+
+  for (let i = data.length - 1; i > 0; i--) { // Loop indietro perché elimino righe
+    const row = data[i];
+    const nomeCane = row[6];
+    const sesso = row[9];
+    const dataArrivo = new Date(row[10]);
+    const dataPartenza = new Date(row[11]);
+    const lavaggio = row[8];
+    const razzaTagliaEta = row[7];
+    const status = row[19];
+    //const razza = getRazza(row[7])
+
+    const cellInput =
+      `${nomeCane} \n ${razzaTagliaEta}\n${sesso}` 
+    // Salta se già processato e non ha modifiche
+    
+    if (status === 'Presence saved') {
+      continue;
+    }
+    
+    addRowToSheet(dataArrivo, dataPartenza, cellInput, lavaggio, monthlySheets)
+
+    sheet.getRange(i + 1, 20).setValue('Presence saved');
+
+  }
+}
+
+/////////////////////SECONDARY FUNCTIONS/////////////////////////
+// here are all the functions used in the two main functions, the two main functions are function addToCalendar() and function addToMonthlySheet(). These two are the functions that need to be triggered for usage. They can be triggered together using function main
+
+//////////////// FUNCTIONS FOR ADD TO CALENDAR ///////////////////
+//function to get archive, if it does not exist it creates it
+function getOrCreateArchive(spreadsheet_input, archiveSheetName, headerRow) {
+  let archiveSheet = spreadsheet_input.getSheetByName(archiveSheetName);
+  if (!archiveSheet) {
+    archiveSheet = spreadsheet_input.insertSheet(archiveSheetName);
+    archiveSheet.appendRow(headerRow); // Copia headers
+  }
+  return archiveSheet;
+}
+
+
+// function to extract only race information, if needed also size and age, not implemented
+function getRazza(razzaTagliaEta_input){
+  const cleaned = razzaTagliaEta_input
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '') // remove common punctuation
+    .replace(/\s+/g, ' ') // collapse multiple spaces
+    .trim(); // trim leading/trailing whitespace
+
+  // Split the cleaned string
+  const parts = cleaned.split(' ');
+
+  // Assign values or set to "Unknown" in case they do not write the full answer
+  const razza = parts[0] || "Unknown";
+  //const taglia = parts[1] || "Unknown";
+  //const eta = parts.slice(2).join(' ') || "Unknown"; // in case age has "3 anni"
+  return razza; // only razza is needed 
+}
+
+//function to create calendar entry, it checks if the calendar exists
+function createIfMissing(cal, start, title, desc, color) {
+  const end    = new Date(start.getTime() + 30*60*1000);
+  const exists = cal.getEvents(start,end).some(e => e.getTitle() === title);
+  if (!exists) {
+    cal.createEvent(title, start, end, { description: desc }).setColor(color);
+  }
+}
+
+
+function moveEvent(calendar, oldStart, title, newStart, desc, color) {
+  // Define a window around the oldStart to find the event (30 minutes duration)
+  const oldEnd = new Date(oldStart.getTime() + 30 * 60 * 1000);
+  const newEnd = new Date(newStart.getTime() + 30 * 60 * 1000);
+
+  // Fetch events in that window matching the title
+  const events = calendar
+    .getEvents(oldStart, oldEnd)
+    .filter(e => e.getTitle() === title);
+  
+  if (events.length > 0) {
+    events[0].setTime(newStart, newEnd);
+  } else {
+    // Fallback: if not found, create a new one, meglio uno in più che in meno
+    calendar.createEvent(title, newStart, newEnd,{ description: desc }).setColor(color);
+  }
+}
+
+
+//this function is not currently used in the main function
+function deleteEvent(cal, oldDate, title) {
+  cal.getEvents(oldDate, new Date(oldDate.getTime() + 31*60*1000))
+     .filter(e => e.getTitle() === title)
+     .forEach(e => e.deleteEvent());
+}
+
+
+//////////////// FUNCTIONS FOR ADD TO MONTHLY SHEET//////////////
+
+function getOrCreateMonthlySheets(spreadsheet_input) {
+  const months = [
+    "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+  ];
+
+  const monthlySheets = months.map((monthName, monthIndex) => getOrCreateMonthlySheet(spreadsheet_input, monthName, monthIndex));
+
+  return monthlySheets;
+}
+
+function getOrCreateMonthlySheet(spreadsheet_input, monthName, monthIndex) {
+  const sheetName = `Presenze ${monthName}`; // Changed the format here
+  let sheet = spreadsheet_input.getSheetByName(sheetName);
+  
+  if (!sheet) { 
+    sheet = spreadsheet_input.insertSheet(sheetName);
+    const currentYear = new Date().getFullYear();
+    const firstDay = new Date(currentYear, monthIndex, 1);
+    const lastDay = new Date(currentYear, monthIndex + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    
+    const dateRow = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      dateRow.push(new Date(currentYear, monthIndex, d));
+    }
+    
+    // Add dates to the first row
+    sheet.getRange(1, 1, 1, daysInMonth)
+      .setValues([dateRow])
+      .setNumberFormat("dd/MM")
+      .setFontWeight("bold")               // make text bold
+      .setBackground("#cfe2f3");           // light-blue background
+  }
+  
+  return sheet;
+}
+///////////////////////////////////////////////////////////////////////////////////
+
+
+function addRowToSheet(dataArrivo, dataPartenza, cellInput, lavaggio, monthlySheets) {
+  const arrivalMonth = dataArrivo.getMonth();
+  const departureMonth = dataPartenza.getMonth();
+  const currentYear = new Date().getFullYear();
+
+  // Get the relevant monthly sheets from the array
+  const arrivalSheet = monthlySheets[arrivalMonth];
+  const departureSheet = arrivalMonth !== departureMonth 
+                        ? monthlySheets[departureMonth] 
+                        : arrivalSheet;
+
+  // Calculate the date range in the arrival month (this may cross into another month)
+  const arrivalDay = dataArrivo.getDate();
+  const departureDay = dataPartenza.getDate();
+
+  // Fill cells in the arrival sheet (from arrivalDay to the last day of that month)
+  if (arrivalMonth === departureMonth) {
+    simpleFillCellsInSheet(arrivalSheet, arrivalDay, departureDay, cellInput, lavaggio);
+  } else {
+    // Fill the cells from arrivalDay to the last day of the arrival month
+    twoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio);
+  }
+}
+
+// Helper function to fill cells in a specific sheet
+function simpleFillCellsInSheet(sheet, startDay, endDay, cellInput, lavaggio) {
+  // Get the first row of dates
+  const row = 1; 
+
+  // Get the total number of days in the range
+  const daysInMonth = endDay - startDay + 1;
+
+  // Find the first empty row (row 2 and beyond) by checking each column
+  let firstEmptyRow = 2;
+  while (sheet.getRange(firstEmptyRow, startDay).getValue() !== "") {
+    firstEmptyRow++;
+  }
+
+  // Now we know the first empty row for the column in question
+  const range = sheet.getRange(firstEmptyRow, startDay, 1, daysInMonth);  // Range where we will set values
+  
+  // Create an array with 1 row and `daysInMonth` columns
+  const values = Array.from({ length: daysInMonth }, () => [cellInput]);  // One row, multiple columns
+  
+  // Set the values in the range
+  range.setValues([values]);
+
+  // Handle special coloring for arrival and departure cells
+  if (lavaggio === "Sì") {
+    sheet.getRange(firstEmptyRow, startDay).setBackground("#93c47d");  // Arrival cell in red
+    sheet.getRange(firstEmptyRow, endDay).setBackground("#a6bfe7");  // Departure cell in blue
+  } else {
+    sheet.getRange(firstEmptyRow, startDay).setBackground("#93c47d");  // Arrival cell in red
+    sheet.getRange(firstEmptyRow, endDay).setBackground("#f4afaf");  // Departure cell in green
+  }
+}
+
+
+function twoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio) {
+  const currentYear = new Date().getFullYear();
+  
+  // ---- Handle Arrival Sheet (from arrivalDay to end of month) ---- //
+  const lastDayArrivalMonth = new Date(currentYear, arrivalMonth + 1, 0).getDate();
+  const daysInArrivalRange = lastDayArrivalMonth - arrivalDay + 1;
+
+  // Find first empty row for arrivalDay
+  let arrivalRow = 2;
+  while (arrivalSheet.getRange(arrivalRow, arrivalDay).getValue() !== "") {
+    arrivalRow++;
+  }
+
+  const arrivalValues = Array(daysInArrivalRange).fill([cellInput]);
+  arrivalSheet.getRange(arrivalRow, arrivalDay, 1, daysInArrivalRange).setValues([arrivalValues]);
+
+  // Color the arrival day cell
+  arrivalSheet.getRange(arrivalRow, arrivalDay).setBackground("#93c47d");
+
+  // ---- Handle Departure Sheet (from 1 to departureDay) ---- //
+  const daysInDepartureRange = departureDay;
+
+  // Find first empty row for column 1 in departureSheet
+  let departureRow = 2;
+  while (departureSheet.getRange(departureRow, 1).getValue() !== "") {
+    departureRow++;
+  }
+
+  const departureValues = Array(daysInDepartureRange).fill([cellInput]);
+  departureSheet.getRange(departureRow, 1, 1, daysInDepartureRange).setValues([departureValues]);
+
+  // Color the departure day cell appropriately
+  const departureColor = lavaggio === "Sì" ? "#a6bfe7" : "#f4afaf";
+  departureSheet.getRange(departureRow, departureDay).setBackground(departureColor);
+}
+
