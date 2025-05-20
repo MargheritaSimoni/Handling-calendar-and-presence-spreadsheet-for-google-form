@@ -14,7 +14,7 @@ function addToCalendar(data, spreadsheet, sheet) {
     sheet = spreadsheet.getActiveSheet();
     data = sheet.getDataRange().getValues();
   }
-  const calendar = CalendarApp.getCalendarById('margherita.simoni30@gmail.com');
+  const calendar = CalendarApp.getCalendarById('youremail@gmail.com');
   const now = new Date(); // date and time attuali
   const archiveSheet = getOrCreateArchive(spreadsheet, 'Archivio', data[0], now );
 
@@ -203,125 +203,122 @@ function getOrCreateMonthlySheets(spreadsheet_input) {
 }
 
 function getOrCreateMonthlySheet(spreadsheet_input, monthName, monthIndex) {
-  const sheetName = `Presenze ${monthName}`; // Changed the format here
+  const sheetName = `Presenze ${monthName}`;
   let sheet = spreadsheet_input.getSheetByName(sheetName);
-  
-  if (!sheet) { 
+
+  if (!sheet) {
     sheet = spreadsheet_input.insertSheet(sheetName);
     const currentYear = new Date().getFullYear();
     const firstDay = new Date(currentYear, monthIndex, 1);
     const lastDay = new Date(currentYear, monthIndex + 1, 0);
     const daysInMonth = lastDay.getDate();
-    
+
     const dateRow = [];
+    const countRow = [];
+
     for (let d = 1; d <= daysInMonth; d++) {
+      const colLetter = columnToLetter(d);
       dateRow.push(new Date(currentYear, monthIndex, d));
+      countRow.push(`=COUNTA(${colLetter}3:${colLetter}1000)`); // Corrected range
     }
-    
-    // Add dates to the first row
+
+    // Set date row (row 1)
     sheet.getRange(1, 1, 1, daysInMonth)
       .setValues([dateRow])
       .setNumberFormat("dd/MM")
-      .setFontWeight("bold")               // make text bold
-      .setBackground("#cfe2f3");           // light-blue background
+      .setFontWeight("bold")
+      .setBackground("#cfe2f3");
+
+    // Set counter row (row 2)
+    sheet.getRange(2, 1, 1, daysInMonth)
+      .setFormulas([countRow])
+      .setFontStyle("italic")
+      .setFontColor("gray");
   }
-  
+
   return sheet;
 }
+
+// Helper function to convert column number to letter (e.g., 1 → A, 27 → AA)
+function columnToLetter(col) {
+  let letter = "";
+  while (col > 0) {
+    const mod = (col - 1) % 26;
+    letter = String.fromCharCode(65 + mod) + letter;
+    col = Math.floor((col - mod - 1) / 26);
+  }
+  return letter;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////
 
 
 function addRowToSheet(dataArrivo, dataPartenza, cellInput, lavaggio, monthlySheets) {
   const arrivalMonth = dataArrivo.getMonth();
   const departureMonth = dataPartenza.getMonth();
-  const currentYear = new Date().getFullYear();
 
-  // Get the relevant monthly sheets from the array
   const arrivalSheet = monthlySheets[arrivalMonth];
-  const departureSheet = arrivalMonth !== departureMonth 
-                        ? monthlySheets[departureMonth] 
+  const departureSheet = arrivalMonth !== departureMonth
+                        ? monthlySheets[departureMonth]
                         : arrivalSheet;
 
-  // Calculate the date range in the arrival month (this may cross into another month)
   const arrivalDay = dataArrivo.getDate();
   const departureDay = dataPartenza.getDate();
 
-  // Fill cells in the arrival sheet (from arrivalDay to the last day of that month)
   if (arrivalMonth === departureMonth) {
-    simpleFillCellsInSheet(arrivalSheet, arrivalDay, departureDay, cellInput, lavaggio);
+    optimizedFillCellsInSheet(arrivalSheet, arrivalDay, departureDay, cellInput, lavaggio);
   } else {
-    // Fill the cells from arrivalDay to the last day of the arrival month
-    twoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio);
+    optimizedTwoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio);
   }
 }
 
-// Helper function to fill cells in a specific sheet
-function simpleFillCellsInSheet(sheet, startDay, endDay, cellInput, lavaggio) {
-  // Get the first row of dates
-  const row = 1; 
+function optimizedFillCellsInSheet(sheet, startDay, endDay, cellInput, lavaggio) {
+  for (let day = startDay; day <= endDay; day++) {
+    let row = 2;
+    while (sheet.getRange(row, day).getValue() !== "") {
+      row++;
+    }
+    sheet.getRange(row, day).setValue(cellInput);
 
-  // Get the total number of days in the range
-  const daysInMonth = endDay - startDay + 1;
-
-  // Find the first empty row (row 2 and beyond) by checking each column
-  let firstEmptyRow = 2;
-  while (sheet.getRange(firstEmptyRow, startDay).getValue() !== "") {
-    firstEmptyRow++;
-  }
-
-  // Now we know the first empty row for the column in question
-  const range = sheet.getRange(firstEmptyRow, startDay, 1, daysInMonth);  // Range where we will set values
-  
-  // Create an array with 1 row and `daysInMonth` columns
-  const values = Array.from({ length: daysInMonth }, () => [cellInput]);  // One row, multiple columns
-  
-  // Set the values in the range
-  range.setValues([values]);
-
-  // Handle special coloring for arrival and departure cells
-  if (lavaggio === "Sì") {
-    sheet.getRange(firstEmptyRow, startDay).setBackground("#93c47d");  // Arrival cell in red
-    sheet.getRange(firstEmptyRow, endDay).setBackground("#a6bfe7");  // Departure cell in blue
-  } else {
-    sheet.getRange(firstEmptyRow, startDay).setBackground("#93c47d");  // Arrival cell in red
-    sheet.getRange(firstEmptyRow, endDay).setBackground("#f4afaf");  // Departure cell in green
+    if (day === startDay) {
+      sheet.getRange(row, day).setBackground("#93c47d"); // Arrival
+    }
+    if (day === endDay) {
+      const color = lavaggio === "Sì" ? "#a6bfe7" : "#f4afaf";
+      sheet.getRange(row, day).setBackground(color); // Departure
+    }
   }
 }
 
-
-function twoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio) {
+function optimizedTwoMonthsFillCellsInSheet(arrivalSheet, arrivalMonth, arrivalDay, departureSheet, departureMonth, departureDay, cellInput, lavaggio) {
   const currentYear = new Date().getFullYear();
-  
-  // ---- Handle Arrival Sheet (from arrivalDay to end of month) ---- //
   const lastDayArrivalMonth = new Date(currentYear, arrivalMonth + 1, 0).getDate();
-  const daysInArrivalRange = lastDayArrivalMonth - arrivalDay + 1;
 
-  // Find first empty row for arrivalDay
-  let arrivalRow = 2;
-  while (arrivalSheet.getRange(arrivalRow, arrivalDay).getValue() !== "") {
-    arrivalRow++;
+  // Fill arrival sheet (from arrivalDay to end of that month)
+  for (let day = arrivalDay; day <= lastDayArrivalMonth; day++) {
+    let row = 2;
+    while (arrivalSheet.getRange(row, day).getValue() !== "") {
+      row++;
+    }
+    arrivalSheet.getRange(row, day).setValue(cellInput);
+
+    if (day === arrivalDay) {
+      arrivalSheet.getRange(row, day).setBackground("#93c47d"); // Arrival
+    }
   }
 
-  const arrivalValues = Array(daysInArrivalRange).fill([cellInput]);
-  arrivalSheet.getRange(arrivalRow, arrivalDay, 1, daysInArrivalRange).setValues([arrivalValues]);
+  // Fill departure sheet (from day 1 to departureDay)
+  for (let day = 1; day <= departureDay; day++) {
+    let row = 2;
+    while (departureSheet.getRange(row, day).getValue() !== "") {
+      row++;
+    }
+    departureSheet.getRange(row, day).setValue(cellInput);
 
-  // Color the arrival day cell
-  arrivalSheet.getRange(arrivalRow, arrivalDay).setBackground("#93c47d");
-
-  // ---- Handle Departure Sheet (from 1 to departureDay) ---- //
-  const daysInDepartureRange = departureDay;
-
-  // Find first empty row for column 1 in departureSheet
-  let departureRow = 2;
-  while (departureSheet.getRange(departureRow, 1).getValue() !== "") {
-    departureRow++;
+    if (day === departureDay) {
+      const color = lavaggio === "Sì" ? "#a6bfe7" : "#f4afaf";
+      departureSheet.getRange(row, day).setBackground(color); // Departure
+    }
   }
-
-  const departureValues = Array(daysInDepartureRange).fill([cellInput]);
-  departureSheet.getRange(departureRow, 1, 1, daysInDepartureRange).setValues([departureValues]);
-
-  // Color the departure day cell appropriately
-  const departureColor = lavaggio === "Sì" ? "#a6bfe7" : "#f4afaf";
-  departureSheet.getRange(departureRow, departureDay).setBackground(departureColor);
 }
 
